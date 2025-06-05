@@ -16,6 +16,10 @@ public class PlayerController {
     @Autowired
     private PlayerService service;
 
+    @GetMapping("/test")
+    public String check() {
+        return "Nee Gudda";
+    }
     @GetMapping("/players")
     public List<Player> getAll() {
         return service.getAll();
