@@ -10,7 +10,7 @@ import java.util.*;
 
 @RestController
 @RequestMapping("/api")
-@CrossOrigin(origins = "*")
+@CrossOrigin(origins = "https://gamebalance-7mjrucevn-sris-projects-4817ae50.vercel.app")
 public class PlayerController {
 
     @Autowired
