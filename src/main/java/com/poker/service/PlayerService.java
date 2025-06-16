@@ -1,15 +1,23 @@
 package com.poker.service;
 
+import java.util.AbstractMap;
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Optional;
+import java.util.UUID;
+
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.stereotype.Service;
+
 import com.poker.model.FoodExpense;
+import com.poker.model.GameSession;
 import com.poker.model.Player;
 import com.poker.model.Withdrawal;
 import com.poker.repo.FoodExpenseRepository;
 import com.poker.repo.PlayerRepository;
 import com.poker.repo.WithdrawalRepository;
-import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.stereotype.Service;
-
-import java.util.*;
 
 @Service
 public class PlayerService {
@@ -27,14 +35,9 @@ public class PlayerService {
         return playerRepo.findAll();
     }
 
-    public Player addPlayer(Player p) {
-        Player newPlayer = playerRepo.save(p);
-        Withdrawal initial = new Withdrawal();
-        initial.setAmount(20);
-        initial.setAddedBy("System");
-        initial.setPlayer(newPlayer);
-        withdrawalRepo.save(initial);
-        return newPlayer;
+    public Player addPlayer(Player player, GameSession session) {
+        player.setSession(session); // ✅ associate session
+        return playerRepo.save(player);
     }
 
     public void deletePlayer(UUID id) {
@@ -54,19 +57,30 @@ public class PlayerService {
     }
 
     public Map<String, Object> calculateResults() {
-        List<Player> players = playerRepo.findAll();
-        List<FoodExpense> foodExpenses = foodRepo.findAll();
+        return calculateResultsInternal(playerRepo.findAll(), foodRepo.findAll());
+    }
 
+    public Map<String, Object> calculateResultsForSession(UUID sessionId) {
+        List<Player> players = playerRepo.findPlayersBySessionId(sessionId);
+        List<FoodExpense> foodExpenses = foodRepo.findAll(); // Optional: Filter if session-specific expenses
+
+        return calculateResultsInternal(players, foodExpenses);
+    }
+
+    private Map<String, Object> calculateResultsInternal(List<Player> players, List<FoodExpense> foodExpenses) {
         Map<String, Double> pokerNet = new HashMap<>();
         Map<String, Double> foodNet = new HashMap<>();
 
         double totalTaken = 0.0;
         double totalReturned = 0.0;
 
-        // Calculate poker net and initialize food net
         for (Player p : players) {
+            List<Withdrawal> withdrawals = withdrawalRepo.findByPlayerId(p.getId());
+            p.setWithdrawals(withdrawals);
+
             double taken = p.getTotalWithdrawals();
             double returned = Optional.ofNullable(p.getFinalAmount()).orElse(0.0);
+
             totalTaken += taken;
             totalReturned += returned;
 
@@ -74,7 +88,6 @@ public class PlayerService {
             foodNet.put(p.getName(), 0.0);
         }
 
-        // Process food expenses
         for (FoodExpense fe : foodExpenses) {
             Player payer = fe.getPayer();
             if (payer == null || fe.getConsumers() == null || fe.getConsumers().isEmpty()) continue;
@@ -92,14 +105,12 @@ public class PlayerService {
             }
         }
 
-        // Final net = poker + food
         Map<String, Double> finalNet = new HashMap<>();
         for (String name : pokerNet.keySet()) {
             double net = pokerNet.get(name) + foodNet.getOrDefault(name, 0.0);
             finalNet.put(name, net);
         }
 
-        // Alert if total taken and returned don't match
         if (Math.abs(totalTaken - totalReturned) > 0.01) {
             return Map.of(
                     "error", String.format("⚠️ Bank mismatch! Total taken: $%.2f, returned: $%.2f", totalTaken, totalReturned),
@@ -119,7 +130,6 @@ public class PlayerService {
                 "settlements", settlements
         );
     }
-
 
     private List<String> calculateSettlements(Map<String, Double> netMap) {
         List<Map.Entry<String, Double>> creditors = new ArrayList<>();
@@ -155,24 +165,25 @@ public class PlayerService {
 
     public List<Player> getAllPlayers() {
         List<Player> players = playerRepo.findAll();
-
         for (Player p : players) {
             List<Withdrawal> withdrawals = withdrawalRepo.findByPlayerId(p.getId());
             p.setWithdrawals(withdrawals);
-            // Ensure null safety for finalAmount
             if (p.getFinalAmount() == null) {
                 p.setFinalAmount(0.0);
             }
         }
-
         return players;
     }
-    
+
     public Player findById(UUID id) {
         return playerRepo.findById(id).orElseThrow(() -> new RuntimeException("Player not found"));
     }
+
     public void deleteExpense(UUID id) {
-    	foodRepo.deleteById(id);
+        foodRepo.deleteById(id);
     }
 
+    public List<Player> getPlayersBySessionId(UUID sessionId) {
+        return playerRepo.findPlayersBySessionId(sessionId);
+    }
 }
