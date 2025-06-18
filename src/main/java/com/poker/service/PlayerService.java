@@ -11,6 +11,7 @@ import java.util.UUID;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
+import com.poker.exception.BankMismatchException;
 import com.poker.model.FoodExpense;
 import com.poker.model.GameSession;
 import com.poker.model.Player;
@@ -67,6 +68,12 @@ public class PlayerService {
         return calculateResultsInternal(players, foodExpenses);
     }
 
+    private void validateBankAmounts(double totalTaken, double totalReturned) {
+        if (Math.abs(totalTaken - totalReturned) > 0.01) {
+            throw new BankMismatchException(totalTaken, totalReturned);
+        }
+    }
+
     private Map<String, Object> calculateResultsInternal(List<Player> players, List<FoodExpense> foodExpenses) {
         Map<String, Double> pokerNet = new HashMap<>();
         Map<String, Double> foodNet = new HashMap<>();
@@ -111,27 +118,21 @@ public class PlayerService {
             finalNet.put(name, net);
         }
 
-        if (Math.abs(totalTaken - totalReturned) > 0.01) {
-            return Map.of(
-                    "error", String.format("⚠️ Bank mismatch! Total taken: $%.2f, returned: $%.2f", totalTaken, totalReturned),
-                    "pokerSummary", pokerNet,
-                    "foodSummary", foodNet,
-                    "finalSummary", finalNet,
-                    "settlements", List.of()
-            );
-        }
+        // Validate total amounts before proceeding
+        validateBankAmounts(totalTaken, totalReturned);
 
-        List<String> settlements = calculateSettlements(finalNet);
+        List<Map<String, Object>> settlements = calculateSettlements(finalNet);
 
         return Map.of(
-                "pokerSummary", pokerNet,
-                "foodSummary", foodNet,
-                "finalSummary", finalNet,
-                "settlements", settlements
-        );
+        	    "pokerSummary", pokerNet,
+        	    "foodSummary", foodNet,
+        	    "finalSummary", finalNet,
+        	    "settlements", settlements // now structured
+        	);
+
     }
 
-    private List<String> calculateSettlements(Map<String, Double> netMap) {
+    private List<Map<String, Object>> calculateSettlements(Map<String, Double> netMap) {
         List<Map.Entry<String, Double>> creditors = new ArrayList<>();
         List<Map.Entry<String, Double>> debtors = new ArrayList<>();
 
@@ -143,7 +144,7 @@ public class PlayerService {
         creditors.sort((a, b) -> Double.compare(b.getValue(), a.getValue()));
         debtors.sort((a, b) -> Double.compare(a.getValue(), b.getValue()));
 
-        List<String> settlements = new ArrayList<>();
+        List<Map<String, Object>> settlements = new ArrayList<>();
         int i = 0, j = 0;
 
         while (i < debtors.size() && j < creditors.size()) {
@@ -151,7 +152,12 @@ public class PlayerService {
             var creditor = creditors.get(j);
 
             double amount = Math.min(-debtor.getValue(), creditor.getValue());
-            settlements.add(String.format("%s pays $%.2f to %s", debtor.getKey(), amount, creditor.getKey()));
+
+            Map<String, Object> settlement = new HashMap<>();
+            settlement.put("from", debtor.getKey());
+            settlement.put("to", creditor.getKey());
+            settlement.put("amount", amount);
+            settlements.add(settlement);
 
             debtor.setValue(debtor.getValue() + amount);
             creditor.setValue(creditor.getValue() - amount);

@@ -26,6 +26,8 @@ import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.client.RestTemplate;
 import org.springframework.web.util.UriComponentsBuilder;
 
+import com.fasterxml.jackson.core.type.TypeReference;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.poker.dto.SessionRequest;
 import com.poker.model.FoodExpense;
 import com.poker.model.GameSession;
@@ -50,11 +52,13 @@ public class PlayerController {
 
     @PostMapping("/session")
     public ResponseEntity<String> startSession(@RequestBody SessionRequest req) {
+    	if(!sessionService.sessionExists()) {
         GameSession session = sessionService.startSession(req.getDate());
 
         List<Map<String, String>> playersData = List.of(
             Map.of("name", "Sridhar", "phone", "+16039213404"),
-            Map.of("name", "Santosh", "phone", "+13127857252")
+            Map.of("name", "Santosh", "phone", "+16039213404")
+
 
             // Add more players as needed
         );
@@ -81,13 +85,14 @@ public class PlayerController {
 
             sendWhatsApp(p.getPhoneNumber(), message);
         }
+    	}
 
         return ResponseEntity.ok("Session started and SMS sent to all players.");
     }
 
     @GetMapping("/test")
     public String check() {
-        return "Nee Gudda";
+        return "HI kOTHI GUDDA .....";
     }
 
     @GetMapping("/food")
@@ -112,7 +117,24 @@ public class PlayerController {
         GameSession session = sessionOpt.get();
 
         // Attach session to player before saving
-        return service.addPlayer(p, session);
+        Withdrawal w = new Withdrawal();
+        w.setAmount(20.0);
+        w.setPlayer(p);
+        p = service.addPlayer(p, session);
+        service.addWithdrawal(p.getId(), w);
+        List<Withdrawal> players = withdrawalRepository.findByPlayerId(p.getId());
+        DateTimeFormatter formatter = DateTimeFormatter.ofPattern("yyyy-MM-dd hh:mm a");
+        String formattedTime = w.getTimestamp() != null
+                ? w.getTimestamp().atZone(ZoneId.systemDefault()).format(formatter)
+                : "Unknown Time";
+        double totalWithdrawals = players.get(0).getAmount();
+               
+        String message = String.format(
+            "Hi %s, your initial withdrawal is $%.2f. Total withdrawals so far: $%.2f.",
+            p.getName(), w.getAmount(), totalWithdrawals, formattedTime
+        );
+        sendWhatsApp("+16039213404", message);
+        return p;
     }
 
     @DeleteMapping("/players/{id}")
@@ -121,62 +143,75 @@ public class PlayerController {
     }
 
     @PostMapping("/players/{id}/withdrawals")
-    public void addWithdrawal(@PathVariable UUID id, @RequestBody Withdrawal w) {
+    public void addWithdrawal(@PathVariable UUID id, @RequestBody Map<String, Object> payload) {
+        double amount = Double.parseDouble(payload.get("amount").toString());
+        String addedBy = (String) payload.getOrDefault("addedBy", "Unknown");
+
+        Withdrawal w = new Withdrawal();
+        w.setAmount(amount);
+        w.setAddedBy(addedBy); // Make sure this field exists in your model
+
         service.addWithdrawal(id, w);
         Player p = service.findById(id);
 
         DateTimeFormatter formatter = DateTimeFormatter.ofPattern("yyyy-MM-dd hh:mm a");
         String formattedTime = w.getTimestamp() != null
-            ? w.getTimestamp().atZone(ZoneId.systemDefault()).format(formatter)
-            : "Unknown Time";
+                ? w.getTimestamp().atZone(ZoneId.systemDefault()).format(formatter)
+                : "Unknown Time";
 
-       // double totalWithdrawals = p.getTotalWithdrawals(); // cumulative
-        List<Withdrawal> players = withdrawalRepository.findByPlayerId(p.getId());
-
-       // double totalWithdrawals = players.get(0).getAmount();
-        double totalWithdrawals = players
-                .stream()
-                .mapToDouble(Withdrawal::getAmount)
-                .sum();
-
+        List<Withdrawal> withdrawals = withdrawalRepository.findByPlayerId(p.getId());
+        double totalWithdrawals = withdrawals.stream().mapToDouble(Withdrawal::getAmount).sum();
 
         if (p.getPhoneNumber() != null && !p.getPhoneNumber().isEmpty()) {
             sendWhatsApp(
                 p.getPhoneNumber(),
                 String.format(
-                  "Hi %s, you’ve taken $%.2f from the bank at %s.\nYour total withdrawals so far: $%.2f.",
-                  p.getName(), w.getAmount(), formattedTime, totalWithdrawals
+                    "Hi %s, $%.2f added to your account at %s by %s.\nTotal withdrawals so far: $%.2f.",
+                    p.getName(), w.getAmount(), formattedTime, addedBy, totalWithdrawals
                 )
             );
         }
     }
-
     @PutMapping("/players/{id}")
     public Player updateFinalAmount(@PathVariable UUID id, @RequestBody Player updated) {
         return service.updateFinalAmount(id, updated.getFinalAmount());
     }
 
-    @GetMapping("/results")
-    public ResponseEntity<?> calculateResults(@RequestParam(defaultValue = "false") boolean override) {
-        Optional<GameSession> sessionOpt = sessionService.getLatestSessionOptional();
+//    @GetMapping("/settle")
+//    public ResponseEntity<?> calculateResults(@RequestParam(defaultValue = "false") boolean override) {
+//        Optional<GameSession> sessionOpt = sessionService.getLatestSessionOptional();
+//
+//        if (sessionOpt.isEmpty()) {
+//            return ResponseEntity.badRequest().body("No active session found.");
+//        }
+//
+//        GameSession session = sessionOpt.get();
+//       Map<String, Object> results = service.calculateResultsForSession(session.getId());
+//        return ResponseEntity.ok(results);
+//    }
 
-        if (sessionOpt.isEmpty()) {
-            return ResponseEntity.badRequest().body("No active session found.");
-        }
-
-        GameSession session = sessionOpt.get();
-        return ResponseEntity.ok(service.calculateResultsForSession(session.getId()));
-    }
-
+   
 
     @PostMapping("/food")
     public FoodExpense addFoodExpense(@RequestBody FoodExpense food) {
+        if (food == null || food.getPayer() == null || food.getPayer().getId() == null) {
+            throw new IllegalArgumentException("Payer must be provided with a valid ID");
+        }
+
         UUID payerId = food.getPayer().getId();
         Player payer = service.findById(payerId);
 
+        if (food.getConsumers() == null || food.getConsumers().isEmpty()) {
+            throw new IllegalArgumentException("At least one consumer must be provided");
+        }
+
         List<Player> fullConsumers = new ArrayList<>();
         for (Player c : food.getConsumers()) {
-            fullConsumers.add(service.findById(c.getId()));
+            if (c == null || c.getId() == null) {
+                throw new IllegalArgumentException("Each consumer must have a valid ID");
+            }
+            Player consumer = service.findById(c.getId());
+            fullConsumers.add(consumer);
         }
 
         food.setPayer(payer);
@@ -201,6 +236,16 @@ public class PlayerController {
             return ResponseEntity.ok(Collections.emptyList());
         }
     }
+    @PostMapping("/players/{id}/return")
+    public ResponseEntity<Void> updateReturnAmount(@PathVariable UUID id, @RequestBody Map<String, Double> payload) {
+        if (!payload.containsKey("amount")) {
+            return ResponseEntity.badRequest().build();
+        }
+        double amount = payload.get("amount");
+        service.updateFinalAmount(id, amount);
+        return ResponseEntity.ok().build();
+    }
+
 
     public void sendWhatsApp(String phoneNumber, String message) {
         try {
@@ -218,4 +263,54 @@ public class PlayerController {
             System.err.println("Failed to send WhatsApp to " + phoneNumber + ": " + e.getMessage());
         }
     }
+    
+
+
+    @GetMapping("/settle")
+    public ResponseEntity<?> calculateResults(@RequestParam(defaultValue = "false") boolean override) {
+        Optional<GameSession> sessionOpt = sessionService.getLatestSessionOptional();
+
+        if (sessionOpt.isEmpty()) {
+            return ResponseEntity.badRequest().body("No active session found.");
+        }
+
+        GameSession session = sessionOpt.get();
+        Map<String, Object> results = service.calculateResultsForSession(session.getId());
+
+        // Build the settlements WhatsApp message if available
+        if (results.containsKey("settlements")) {
+            @SuppressWarnings("unchecked")
+            List<Map<String, Object>> settlements = (List<Map<String, Object>>) results.get("settlements");
+
+            StringBuilder sb = new StringBuilder();
+            sb.append("💰 *Poker Game Settlements Summary:*\n\n");
+
+            for (Map<String, Object> settlement : settlements) {
+                String from = settlement.get("from") != null ? settlement.get("from").toString() : "Unknown";
+                String to = settlement.get("to") != null ? settlement.get("to").toString() : "Unknown";
+
+                double amount = 0.0;
+                try {
+                    Object amtObj = settlement.get("amount");
+                    if (amtObj instanceof Number) {
+                        amount = ((Number) amtObj).doubleValue();
+                    } else if (amtObj instanceof String) {
+                        amount = Double.parseDouble((String) amtObj);
+                    }
+                } catch (Exception e) {
+                    e.printStackTrace();
+                }
+
+                sb.append(String.format("➡️ %s pays $%.2f to %s\n", from, amount, to));
+            }
+
+            sb.append("\n✔️ Please settle up as soon as possible!");
+
+            // Send the WhatsApp message
+            sendWhatsApp("+16039213404", sb.toString());
+        }
+
+        return ResponseEntity.ok(results);
+    }
+
 } 
