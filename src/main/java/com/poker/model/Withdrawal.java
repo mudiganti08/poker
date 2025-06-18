@@ -1,9 +1,16 @@
 package com.poker.model;
 
-import com.fasterxml.jackson.annotation.JsonBackReference;
-import jakarta.persistence.*;
 import java.time.LocalDateTime;
 import java.util.UUID;
+
+import com.fasterxml.jackson.annotation.JsonBackReference;
+
+import jakarta.persistence.Entity;
+import jakarta.persistence.GeneratedValue;
+import jakarta.persistence.GenerationType;
+import jakarta.persistence.Id;
+import jakarta.persistence.JoinColumn;
+import jakarta.persistence.ManyToOne;
 
 @Entity
 public class Withdrawal {
@@ -38,4 +45,5 @@ public class Withdrawal {
 
     public Player getPlayer() { return player; }
     public void setPlayer(Player player) { this.player = player; }
+    
 }
