@@ -92,7 +92,7 @@ public class PlayerController {
 
     @GetMapping("/test")
     public String check() {
-        return "HI kOTHI GUDDA .....";
+        return "HI......";
     }
 
     @GetMapping("/food")
@@ -314,3 +314,4 @@ public class PlayerController {
     }
 
 } 
+
